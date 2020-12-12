@@ -27,7 +27,10 @@ Imports:
     httr,
     lubridate (>= 1.5.0),
     stringr,
-    methods
+    methods,
+    purrr,
+    dplyr,
+    tidyr
 Suggests:
     knitr,
     markdown,

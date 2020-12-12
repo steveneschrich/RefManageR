@@ -259,7 +259,8 @@ GetPubMedRelated <- function(id, database = "pubmed", batch.mode = TRUE,
 }
 
 #' @keywords internal
-#' @importFrom xml2 xml_text xml_find_all xml_attr
+#' @importFrom xml2 xml_text xml_find_all xml_attr xml_find_first
+#' @importFrom purrr map_dfr
 #' @noRd
 ProcessPubMedResult <- function(tdoc){
   if (!length(tdoc))
@@ -270,17 +271,24 @@ ProcessPubMedResult <- function(tdoc){
   title <- xml_text(xml_find_all(tdoc,
                                  ".//MedlineCitation/Article/ArticleTitle"))
   res$title <- sub("\\.$", "", title, useBytes = TRUE)
-  last.names <- xml_text(xml_find_all(tdoc,
-                ".//MedlineCitation/Article/AuthorList/Author/LastName"))
-  first.names <- xml_text(xml_find_all(tdoc,
-                ".//MedlineCitation/Article/AuthorList/Author/ForeName"))
-  res$author <- as.person(paste(first.names, last.names))
-  if (!length(res$author)){
-      last.names <- xml_text(xml_find_all(tdoc,
-                ".//MedlineCitation/Article/AuthorList/Author/CollectiveName"))
-      if (length(last.names))
-          res$author <- person(last.names)
-  }
+  
+  res$author_table <- purrr::map_dfr(xml2::xml_children(
+                                      xml2::xml_find_first(tdoc,
+                                        ".//MedlineCitation/Article/AuthorList")), 
+                                    ProcessPubMedAuthor)
+  # Combine author_table fields into a person type. Note the comment is complex;
+  # this is because you can stuff multiple comments in there so the code is setup
+  # to add more than one (although only one is currently used).
+  res$author <- person(given=as.list(res$author_table$given),
+                       family=as.list(res$author_table$family),
+                       comment=apply(res$author_table, 1,
+                                        function(l) {
+                                          avail_fields<-intersect(c("Affiliation"),
+                                                                  names(l))
+                                          as.list(l[avail_fields])
+                                        }
+                       ))
+                         
   complete.AuthorList <- xml_attr(xml_find_all(tdoc,
                     ".//MedlineCitation/Article/AuthorList"),
                                     attr = "CompleteYN", default = "")
@@ -354,7 +362,108 @@ ProcessPubMedResult <- function(tdoc){
   MakeBibEntry(res, FALSE)
 }
 
+
+
+#' Parse the pubmed XML of an Author into a data frame.
+#'
+#' @param aux The XML node corresponding to an author.
+#'
+#' @return A data frame of corresponding information.
+#' @export
+#'
+#' @examples
 #' @importFrom xml2 xml_text xml_find_first
+#' @noRd
+ProcessPubMedAuthor<-function(aux) {
+  
+  au<-list()
+  
+  au$LastName<-xml2::xml_text(xml2::xml_child(aux, "LastName"))
+  au$FirstName<-dplyr::coalesce(xml2::xml_text(xml2::xml_child(aux, "FirstName")),
+                                xml2::xml_text(xml2::xml_child(aux, "ForeName")))
+  au$Suffix<-xml2::xml_text(xml2::xml_child(aux, "Suffix"))
+  au$CollectiveName<-xml2::xml_text(xml2::xml_child(aux, "CollectiveName"))
+  
+  # A nice check from Zotero, if first or last name is all upcase then
+  # change to title case.
+  if (!is.na(au$LastName) & stringr::str_to_upper(au$LastName)==au$LastName) {
+    au$LastName<-stringr::str_to_title(au$LastName)
+  }
+  if (!is.na(au$FirstName) & stringr::str_to_upper(au$FirstName)==au$FirstName) {
+    au$FirstName<-stringr::str_to_title(au$FirstName)
+  }
+  
+  # Lastly, create a nice "Full Name" if we can.
+  if ( !all(is.na(c(au$FirstName, au$LastName, au$Suffix)))) {
+    au$FullName<-sprintf("%s %s%s",
+                         tidyr::replace_na(au$FirstName,""),
+                         tidyr::replace_na(au$LastName,""),
+                         format_suffix(au$Suffix))
+    
+  } else {
+    au$FullName<-au$CollectiveName
+  }
+  
+  # These are translations for the person object in R. Note that collective name
+  # (per the help page) says use the given name.
+  au$given<-au$FirstName
+  au$family<-dplyr::coalesce(au$LastName, au$CollectiveName)
+  
+  # Add in affiliations
+  au$Affiliation<-parse_affiliation(xml2::xml_child(aux, "AffiliationInfo"))
+  
+  data.frame(au, stringsAsFactors = FALSE, check.names=FALSE)
+}
+
+
+#' Parse an author's affiliation in pubmed XML.
+#'
+#' Note that the affiliation can include identifiers which are not
+#' currently handled in this code (although it will produce a warning).
+#'
+#' @noRd
+#' @param aff The XML node corresponding to AffiliationInfo
+#'
+#' @return A string representing the affiliation.
+#' @export
+#'
+#' @importFrom xml2 xml_children xml_child xml_text
+#' @examples
+parse_affiliation<-function(aff) {
+  if (length(xml2::xml_children(aff))>1)
+    warning("Affiliation includes an additional identifier not handled.")
+  xml2::xml_text(xml2::xml_child(aff,"Affiliation"))
+}
+
+#' Format the suffix (e.g., Phd, etc).
+#'
+#' This is a helper function that only adds the ,space if the suffix actually
+#' exists. A string corresponding to a "nice' version of the suffix is included.
+#'
+#' @noRd
+#' @param s the suffix
+#'
+#' @return A string representing a pretty version (leading ,) for printing.
+#' @export
+#'
+#' @importFrom stringr str_length
+#' @examples
+#'
+#' sprintf("%s %s%s", "Joe","Smith","PhD")
+#' yields:
+#' Joe Smith, PhD
+#'
+format_suffix<-function(s) {
+  if (!is.na(s) & stringr::str_length(s)>0)
+    stringr::str_c(", ",s)
+  else
+    ""
+}
+
+
+
+#' @importFrom xml2 xml_text xml_find_first
+#' @importFrom purrr map_dfr
 #' @noRd
 extractPubMedDatePart <- function(nodes, type = "Article", date.part = "Year"){
   xpaths <- 
@@ -386,12 +495,24 @@ ProcessPubMedBookResult <- function(tdoc){
   title <- xml_text(xml_find_all(tdoc,
                          "//PubmedBookArticle/BookDocument/Book/BookTitle"))
   res$title <- gsub("\\.$", "", title, useBytes = TRUE)
-  last.names <- xml_text(xml_find_all(tdoc,
-        "//PubmedBookArticle/BookDocument/Book/AuthorList/Author/LastName"))
-  first.names <- xml_text(xml_find_all(tdoc,
-        "//PubmedBookArticle/BookDocument/Book/AuthorList/Author/ForeName"))
-  res$author <- as.person(paste(first.names, last.names))
 
+  res$author_table <- purrr::map_dfr(xml2::xml_children(
+    xml2::xml_find_first(tdoc,
+                         "//PubmedBookArticle/BookDocument/Book/AuthorList")), 
+    ProcessPubMedAuthor)
+  # Combine author_table fields into a person type. Note the comment is complex;
+  # this is because you can stuff multiple comments in there so the code is setup
+  # to add more than one (although only one is currently used).
+  res$author <- person(given=as.list(res$author_table$given),
+                       family=as.list(res$author_table$family),
+                       comment=apply(
+                         res$author_table[,c("Affiliation"),drop=F],
+                         1,
+                         as.list
+                       ))
+  
+  
+  
   res$year <- extractPubMedDatePart(tdoc, type = "Book", date.part = "Year")
   res$month <- extractPubMedDatePart(tdoc, type = "Book", date.part = "Month")
 
