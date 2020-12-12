@@ -505,12 +505,13 @@ ProcessPubMedBookResult <- function(tdoc){
   # to add more than one (although only one is currently used).
   res$author <- person(given=as.list(res$author_table$given),
                        family=as.list(res$author_table$family),
-                       comment=apply(
-                         res$author_table[,c("Affiliation"),drop=F],
-                         1,
-                         as.list
+                       comment=apply(res$author_table, 1,
+                                     function(l) {
+                                       avail_fields<-intersect(c("Affiliation"),
+                                                               names(l))
+                                       as.list(l[avail_fields])
+                                     }
                        ))
-  
   
   
   res$year <- extractPubMedDatePart(tdoc, type = "Book", date.part = "Year")
