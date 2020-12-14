@@ -310,6 +310,11 @@ GetFormatFunctions <- function(docstyle = "text", DateFormatter){
                                'jstor' = 'JSTOR',
                                'hdl' = 'HDL', paper$eprinttype),
                         ': ', paper$eprint)
+          if (tolower(paper$eprinttype) == 'pubmed') {
+            if (length(paper$pmcid)) {
+              res<-paste0(res, ' PMCID: ', paper$pmcid,'.')
+            }
+          }
           if (tolower(paper$eprinttype) == 'arxiv'){
             if (length(paper$eprintclass)){
               res <- paste0(res, ' [', paper$eprintclass, ']')
