@@ -308,23 +308,17 @@ ProcessPubMedResult <- function(tdoc){
   res$pages <- xml_text(xml_find_all(tdoc,
                         ".//MedlineCitation/Article/Pagination/MedlinePgn"))
   res$eprint <- xml_text(xml_find_all(tdoc, ".//MedlineCitation/PMID"))
-  doi <- xml_text(xml_find_all(tdoc, ".//PubmedData/ArticleIdList/ArticleId"))
-  res$doi <- if (length(doi > 1)){
-    id.types <- xml_attr(xml_find_all(tdoc,
-                    ".//PubmedData/ArticleIdList/ArticleId"),
-                                    attr = "IdType", default = "")
-    if (length(doi.pos <- grep("doi", id.types, ignore.case = TRUE,
-                               useBytes = TRUE)))
-       doi[doi.pos[1L]]
-    else{
-      doi <- vapply(doi, SearchDOIText, "")
-      if (any(doi.pos <- vapply(doi, nzchar, FALSE)))
-        doi[doi.pos[1L]]
-      else
-        NULL
-    }
-  }else
-    doi
+
+  # Collect all id's for the document.
+  article.ids<-setNames(
+    xml_text(xml_find_all(tdoc, ".//PubmedData/ArticleIdList/ArticleId")),
+    xml_attr(xml_find_all(tdoc,".//PubmedData/ArticleIdList/ArticleId"), attr = "IdType")
+  )
+  # Set specific id's.
+  res$pmid<-res$eprint
+  res$doi <- FindIdentifier(article.ids, "doi", SearchDOIText)
+  res$pmcid <- FindIdentifier(article.ids, "pmc", SearchPMCText)
+  
   # res$doi <- grep("/", doi, value = TRUE)
 
   res$language <- xml_text(xml_find_all(tdoc,
@@ -362,6 +356,28 @@ ProcessPubMedResult <- function(tdoc){
   MakeBibEntry(res, FALSE)
 }
 
+
+FindIdentifier<-function(article.ids, name, search.function) {
+  if (length(pos<-grep(name, names(article.ids), ignore.case=TRUE, useBytes=TRUE))>1) {
+    article.ids[pos[1L]]
+  } else {
+    hits <- vapply(article.ids, search.function, "")
+    if (any(pos <- which(vapply(hits, nzchar, FALSE))))
+      hits[pos[1L]]
+    else
+      NULL 
+  }
+}
+SearchPMCText<-function(txt) {
+  pattern <- "PMC[0-9]{7}"
+  m<-regexpr(pattern, txt, perl=TRUE, useBytes = TRUE)
+  if (all(m==-1)) {
+    return("")
+    
+  } else {
+    return(regmatches(txt, m)[1])
+  }
+}
 
 
 #' Parse the pubmed XML of an Author into a data frame.
@@ -527,25 +543,18 @@ ProcessPubMedBookResult <- function(tdoc){
           "//PubmedBookArticle/BookDocument/Book/Publisher/PublisherLocation"))
   res$eprint <- xml_text(xml_find_all(tdoc,
                                       "//PubmedBookArticle/BookDocument/PMID"))
-  doc.ids <- xml_text(xml_find_all(tdoc,
-                 "//PubmedBookArticle/PubmedBookData/ArticleIdList/ArticleId"))
-  id.types <- xml_attr(xml_find_all(tdoc,
-                  "//PubmedBookArticle/PubmedBookData/ArticleIdList/ArticleId"),
-                                    attr = "IdType", default = "")
-  ## res$eprint <- if(length(pmid.pos <- grep("pubmed", id.types,
-  ##                                          ignore.case = TRUE)))
-  ##                  doc.ids[pmid.pos[1L]]
-  res$doi <- if (length(doi.pos <- grep("doi", id.types, ignore.case = TRUE,
-                                        useBytes = TRUE)))
-               doc.ids[doi.pos[1L]]
-             else{
-               doc.ids <- vapply(doc.ids, SearchDOIText, "")
-               if (any(doi.pos <- vapply(doc.ids, nzchar, FALSE)))
-                 doc.ids[doi.pos[1L]]
-               else
-                 NULL
-             }
-
+ 
+  # Collect all id's for the document.
+  article.ids<-setNames(
+    xml_text(xml_find_all(tdoc, "//PubmedBookArticle/PubmedBookData/ArticleIdList/ArticleId")),
+    xml_attr(xml_find_all(tdoc,"//PubmedBookArticle/PubmedBookData/ArticleIdList/ArticleId"), attr = "IdType")
+  )
+  # Set specific id's.
+  res$pmid<-res$eprint
+  res$doi <- FindIdentifier(article.ids, "doi", SearchDOIText)
+  res$pmcid <- FindIdentifier(article.ids, "pmc", SearchPMCText)
+  
+  
   # res$doi <- grep("/", doi, value = TRUE)
 
   res$language <- xml_text(xml_find_all(tdoc,
